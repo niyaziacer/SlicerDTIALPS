@@ -1,0 +1,64 @@
+{
+  "name": "DTIALPS",
+  "title": "DTI-ALPS Index",
+  "category": "Diffusion",
+  "contributors": [
+    {
+      "name": "Niyazi Acer",
+      "affiliation": "Erciyes University",
+      "email": "acerniyazi@gmail.com",
+      "role": "Developer"
+    }
+  ],
+  "description": {
+    "short": "Automatically computes the DTI-ALPS index from DSI Studio QSDR output",
+    "long": "SlicerDTIALPS automatically computes the DTI-ALPS (Diffusion Tensor Image Analysis along the Perivascular Space) index from DSI Studio QSDR output (tensor components + FA). It features fixed MNI-coordinate ROIs, automatic FA scale detection, and data-quality QC warnings."
+  },
+  "acknowledgments": {
+    "text": "ALPS method: Taoka et al., Jpn J Radiol 2017. ROI coordinates: Barisano et al. / Liu et al.",
+    "url": ""
+  },
+  "license": {
+    "extension_code": "MIT"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niyaziacer/SlicerDTIALPS",
+    "branch": "main"
+  },
+  "homepage": "https://github.com/niyaziacer/SlicerDTIALPS",
+  "documentation": "https://github.com/niyaziacer/SlicerDTIALPS/blob/main/README.md",
+  "status": "Alpha",
+  "version": "0.1.0",
+  "slicer_version": "5.0+",
+  "dependencies": {
+    "python_packages": [
+      "numpy",
+      "nibabel"
+    ],
+    "slicer_extensions": []
+  },
+  "screenshots": [],
+  "icon": {
+    "file": "DTIALPS/Resources/Icons/DTIALPS.png",
+    "url": "https://raw.githubusercontent.com/niyaziacer/SlicerDTIALPS/main/DTIALPS/Resources/Icons/DTIALPS.png"
+  },
+  "features": [
+    "Computes left/right/mean DTI-ALPS index from DSI Studio txx/tyy/tzz/FA NIfTI files",
+    "Fixed MNI ROI coordinates (proj_L/R, assoc_L/R) with spherical masks",
+    "Automatic FA scale detection (0-1 vs 0-1000)",
+    "Dominant-axis QC per ROI"
+  ],
+  "keywords": [
+    "DTI-ALPS",
+    "diffusion tensor imaging",
+    "glymphatic system",
+    "perivascular space",
+    "DSI Studio",
+    "neuroimaging"
+  ],
+  "build": {
+    "type": "python_scripted",
+    "cmake_required": true
+  }
+}

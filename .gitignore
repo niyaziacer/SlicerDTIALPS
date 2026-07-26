@@ -1,0 +1,11 @@
+*.nii
+*.nii.gz
+*.dcm
+*.sz
+*.fib.gz
+*.qsdr.fz
+*.csv
+__pycache__/
+*.pyc
+.slicer-cache
+.claude/
