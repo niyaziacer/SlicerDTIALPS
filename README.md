@@ -31,6 +31,14 @@ exactly what QSDR reconstruction does. If you instead export **native
 (subject) space** data, the ROIs will fall in the wrong anatomical location
 and the resulting ALPS value will be meaningless.
 
+## Tutorial / Video
+
+A short walkthrough showing how to obtain the tensor components (`txx`,
+`tyy`, `tzz`), FA, and MD from DSI Studio — SRC creation, QSDR
+reconstruction, and exporting the NIfTI files this module expects as input:
+
+▶ [Watch on YouTube](https://www.youtube.com/watch?v=R1CVh612a6I)
+
 ## Usage
 
 1. For each of the five inputs (txx, tyy, tzz, FA, MD), load the
@@ -108,8 +116,7 @@ The module does **not** silently pass bad data. After Apply, it warns if:
   (projection ROIs should be Dzz-dominant, association ROIs Dyy-dominant)
 - A ROI has fewer than 10 voxels passing the FA threshold
 
-If none of these trigger, the module reports "Tüm kontroller geçti." (All
-checks passed.)
+If none of these trigger, the module reports "All checks passed."
 
 ## References
 
