@@ -8,7 +8,7 @@ set(EXTENSION_CATEGORY "Diffusion")
 set(EXTENSION_CONTRIBUTORS "Niyazi Acer (Erciyes University)")
 set(EXTENSION_DESCRIPTION "Automatically computes the DTI-ALPS (Diffusion Tensor Image Analysis along the Perivascular Space) index from DSI Studio QSDR output (tensor components + FA).")
 set(EXTENSION_ICONURL "https://raw.githubusercontent.com/niyaziacer/SlicerDTIALPS/main/DTIALPS/Resources/Icons/DTIALPS.png")
-set(EXTENSION_SCREENSHOTURLS "")
+set(EXTENSION_SCREENSHOTURLS "https://raw.githubusercontent.com/niyaziacer/SlicerDTIALPS/main/Screenshots/Screenshot1.png")
 set(EXTENSION_DEPENDS "NA")
 
 #-----------------------------------------------------------------------------

@@ -7,6 +7,10 @@ Analysis along the Perivascular Space) index from DSI Studio QSDR output
 (tensor components + FA). It features fixed MNI-coordinate ROIs, automatic
 FA scale detection, and data-quality QC warnings.
 
+License: MIT.
+
+![SlicerDTIALPS screenshot](https://raw.githubusercontent.com/niyaziacer/SlicerDTIALPS/main/Screenshots/Screenshot1.png)
+
 ## Data preparation (DSI Studio)
 
 **The module does not perform reconstruction — it only reads DSI Studio's
