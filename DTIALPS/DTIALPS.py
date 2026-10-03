@@ -45,6 +45,37 @@ except ImportError:
             pass
 
 
+INPUT_TIME_SPREAD_SECONDS = 3600  # ayni DSI Studio disa aktarimi dakikalar icinde yazilir
+
+
+def inputSpreadWarnings(infos, maxSpreadSeconds=INPUT_TIME_SPREAD_SECONDS):
+    """Girdi dosyalarinin AYNI disa aktarimdan gelip gelmedigini kontrol eder.
+
+    infos: {anahtar: {"path": str|None, "mtime": float|None}}. Ayni konudan
+    birden cok disa aktarim seti bulunabilir (farkli gunlerde yeniden
+    export); hepsi ayni adi tasidigi icin yanlislikla karistirilabilir.
+    Saf fonksiyon: Slicer/dosya sistemine dokunmaz. Uyari metinleri listesi doner.
+    """
+    out = []
+    paths = {k: v["path"] for k, v in infos.items() if v and v.get("path")}
+    if not paths:
+        return out
+    folders = {os.path.normcase(os.path.dirname(p)) for p in paths.values()}
+    if len(folders) > 1:
+        out.append(
+            "WARNING: Input volumes come from different folders. Make sure all "
+            "maps (txx, tyy, tzz, FA, MD) are from the SAME DSI Studio export."
+        )
+    mtimes = [v["mtime"] for v in infos.values() if v and v.get("mtime") is not None]
+    if mtimes and (max(mtimes) - min(mtimes)) > maxSpreadSeconds:
+        hours = (max(mtimes) - min(mtimes)) / 3600.0
+        out.append(
+            f"WARNING: Input files were written {hours:.1f} h apart. Maps from "
+            f"different exports may be mixed - re-export all maps in one go."
+        )
+    return out
+
+
 class DTIALPS(ScriptedLoadableModule):
     """Modul kayit sinifi (Slicer modul listesinde gorunen meta bilgiler)."""
 
@@ -65,6 +96,10 @@ class DTIALPS(ScriptedLoadableModule):
             "<b>Usage:</b> load each volume with its \"...\" button "
             "(txx/tyy/tzz/FA required, MD optional), then click Apply for "
             "left/right/mean ALPS, a per-ROI table, and automatic ROI markups. "
+            "<b>Show direction color map (QC)</b> adds an approximate direction-"
+            "encoded color map (R=Dxx, G=Dyy, B=Dzz, brightness=FA) so you can check "
+            "that the projection ROIs sit on blue and the association ROIs on green "
+            "fibers. "
             "The module warns rather than silently passing bad data: it flags "
             "out-of-range MD/ALPS, wrong dominant axis, or low ROI voxel counts. "
             "See the extension's README.md for full details and data-suitability "
@@ -150,6 +185,17 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
         self.applyButton.connect("clicked(bool)", self.onApplyClicked)
         self.layout.addWidget(self.applyButton)
 
+        self.colorMapButton = qt.QPushButton("Show direction color map (QC)")
+        self.colorMapButton.toolTip = (
+            "Approximate direction-encoded color map from txx/tyy/tzz and FA "
+            "(R = Dxx left-right, G = Dyy anterior-posterior, B = Dzz "
+            "superior-inferior). Use it to check that the projection ROIs (red) "
+            "sit on blue fibers and the association ROIs (cyan) on green fibers."
+        )
+        self.colorMapButton.enabled = False
+        self.colorMapButton.connect("clicked(bool)", self.onShowColorMapClicked)
+        self.layout.addWidget(self.colorMapButton)
+
         self.exportCsvButton = qt.QPushButton("Save as CSV")
         self.exportCsvButton.enabled = False
         self.exportCsvButton.connect("clicked(bool)", self.onExportCsvClicked)
@@ -180,6 +226,10 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
             self.resultsTable.setItem(row, 0, qt.QTableWidgetItem(name))
         resultsLayout.addWidget(self.resultsTable)
 
+        self.inputInfoLabel = qt.QLabel("Inputs: —")
+        self.inputInfoLabel.setWordWrap(True)
+        resultsLayout.addWidget(self.inputInfoLabel)
+
         self.warningsTextEdit = qt.QTextEdit()
         self.warningsTextEdit.setReadOnly(True)
         self.warningsTextEdit.setPlainText("—")
@@ -190,6 +240,7 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
         self._lastResult = None
         self._lastWarnings = None
         self._lastNodes = None
+        self._lastInputInfo = None
 
         self._updateApplyButtonState()
 
@@ -198,6 +249,8 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
             self.nodeSelectors[key].currentNode() is not None for key in self.REQUIRED_KEYS
         )
         self.applyButton.enabled = ready
+        if hasattr(self, "colorMapButton"):
+            self.colorMapButton.enabled = ready
 
     @staticmethod
     def _normalizePath(path):
@@ -280,7 +333,43 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
             # event dongusune erteleyip tekrar dene.
             qt.QTimer.singleShot(0, lambda: selector.setCurrentNodeID(nodeId))
 
-    def _buildWarnings(self, result):
+    @staticmethod
+    def _inputFileInfo(node):
+        """Node'un diskteki kaynak dosyasi: yol, degisme zamani, boyut (yoksa None)."""
+        info = {"path": None, "mtime": None, "size": None}
+        if node is None:
+            return info
+        storageNode = node.GetStorageNode()
+        if storageNode is not None and storageNode.GetFileName():
+            path = storageNode.GetFileName()
+            info["path"] = path
+            try:
+                info["mtime"] = os.path.getmtime(path)
+                info["size"] = os.path.getsize(path)
+            except OSError:
+                pass
+        return info
+
+    def _describeInputs(self, infoByKey):
+        import time
+
+        lines = []
+        for key in self.ALL_KEYS:
+            info = infoByKey[key]
+            if not info["path"]:
+                lines.append(f"{key}: (scene node, no file)")
+                continue
+            stamp = (
+                time.strftime("%Y-%m-%d %H:%M", time.localtime(info["mtime"]))
+                if info["mtime"] is not None else "?"
+            )
+            lines.append(f"{key}: {os.path.basename(info['path'])}  [{stamp}]")
+        folders = {os.path.dirname(i["path"]) for i in infoByKey.values() if i["path"]}
+        header = f"Folder: {next(iter(folders))}" if len(folders) == 1 else (
+            "Folders: " + "; ".join(sorted(folders)) if folders else "")
+        return "\n".join(([header] if header else []) + lines)
+
+    def _buildWarnings(self, result, extra=()):
         """Sonuc dict'ini QC esikleriyle (Logic'teki sabitler) karsilastirip
         okunabilir uyari/bilgi metinleri uretir. Saf metin uretimi - Logic'e
         dokunmaz, hesap yapmaz."""
@@ -327,6 +416,8 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
                     f"in the {name} ROI. Result is unreliable."
                 )
 
+        warnings.extend(extra)
+
         if not warnings:
             warnings.append("All checks passed.")
 
@@ -364,15 +455,37 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
                 nameItem = self.resultsTable.item(row, 0)
                 nameItem.setBackground(redBrush)
 
-        warnings = self._buildWarnings(result)
+        inputInfo = {key: self._inputFileInfo(nodes[key]) for key in self.ALL_KEYS}
+        warnings = self._buildWarnings(result, extra=inputSpreadWarnings(inputInfo))
         self.warningsTextEdit.setPlainText("\n".join(warnings))
+        self.inputInfoLabel.text = self._describeInputs(inputInfo)
 
         self._updateROIMarkups(result["rois"])
 
         self._lastResult = result
         self._lastWarnings = warnings
         self._lastNodes = nodes
+        self._lastInputInfo = inputInfo
         self.exportCsvButton.enabled = True
+
+    def onShowColorMapClicked(self, checked=False):
+        nodes = {key: self.nodeSelectors[key].currentNode() for key in self.REQUIRED_KEYS}
+        try:
+            node = self.logic.createDirectionColorVolume(
+                nodes["txx"], nodes["tyy"], nodes["tzz"], nodes["fa"]
+            )
+        except Exception as exc:
+            slicer.util.errorDisplay(f"Could not build the direction color map:\n\n{exc}")
+            return
+        slicer.util.setSliceViewerLayers(background=node, fit=True)
+        # ROI'ler hesaplandiysa eksenel kesiti ROI duzlemine tasi
+        if self._lastResult is not None:
+            try:
+                center = self._lastResult["rois"]["proj_L"]["center_ras"]
+                layoutManager = slicer.app.layoutManager()
+                layoutManager.sliceWidget("Red").sliceLogic().SetSliceOffset(center[2])
+            except Exception:
+                pass
 
     def _updateROIMarkups(self, rois):
         for node in self._roiNodes.values():
@@ -455,10 +568,24 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
                 writer.writerow([warning])
             writer.writerow([])
 
-            writer.writerow(["Input Volumes"])
+            writer.writerow(["Input Volumes", "Node", "File", "Modified", "Bytes"])
+            import time
+
+            infoByKey = self._lastInputInfo or {}
             for key in self.ALL_KEYS:
                 node = nodes[key]
-                writer.writerow([key, node.GetName() if node is not None else "(none)"])
+                info = infoByKey.get(key) or {"path": None, "mtime": None, "size": None}
+                stamp = (
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info["mtime"]))
+                    if info["mtime"] is not None else ""
+                )
+                writer.writerow([
+                    key,
+                    node.GetName() if node is not None else "(none)",
+                    info["path"] or "",
+                    stamp,
+                    info["size"] if info["size"] is not None else "",
+                ])
 
         slicer.util.infoDisplay(f"Saved:\n{path}")
 
@@ -490,6 +617,55 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
     MD_MIN, MD_MAX = 0.6, 1.2
     ALPS_MIN, ALPS_MAX = 0.9, 1.8
     MIN_ROI_VOXELS = 10
+
+    @classmethod
+    def directionColor(cls, Dxx, Dyy, Dzz, fa, faScale=0.6):
+        """Kose/diyagonal bilesenlerden YAKLASIK yon-renk haritasi (uint8, (...,3)).
+
+        R = Dxx (sol-sag), G = Dyy (on-arka), B = Dzz (ust-alt); parlaklik FA ile.
+        DIKKAT: Bu gercek DEC degildir. Gercek DEC birinci oz vektoru ister
+        (tam tensor: txy, txz, tyz de gerekir); burada yalniz txx/tyy/tzz var.
+        Lifler eksenlere hizaliyken (projeksiyon: ust-alt, asosiasyon: on-arka)
+        gercek DEC ile ayni renkleri verir; ROI yerlesimini gozle dogrulamak icin
+        yeterlidir.
+        """
+        Dxx = np.nan_to_num(np.asarray(Dxx, dtype=float))
+        Dyy = np.nan_to_num(np.asarray(Dyy, dtype=float))
+        Dzz = np.nan_to_num(np.asarray(Dzz, dtype=float))
+        fa = np.nan_to_num(np.asarray(fa, dtype=float))
+        if fa.size and fa.max() > cls.FA_RESCALE_TRIGGER:
+            fa = fa / 1000.0
+        trace = Dxx + Dyy + Dzz
+        valid = trace > 1e-12
+        safe = np.where(valid, trace, 1.0)
+        w = np.stack([Dxx / safe, Dyy / safe, Dzz / safe], axis=-1)
+        w = np.where(valid[..., None], w, 0.0)
+        color = np.clip((w - 0.2) / 0.6, 0.0, 1.0)
+        brightness = np.clip(fa / faScale, 0.0, 1.0)
+        return np.rint(color * brightness[..., None] * 255.0).astype(np.uint8)
+
+    def createDirectionColorVolume(self, txxNode, tyyNode, tzzNode, faNode,
+                                   name="DTIALPS_directionColor"):
+        """Yon-renk haritasini sahneye RGB vektor hacmi olarak ekler (txx ile ayni geometri)."""
+        import vtk
+
+        Dxx, _ = self._arrayAndAffineFromNode(txxNode)
+        Dyy, _ = self._arrayAndAffineFromNode(tyyNode)
+        Dzz, _ = self._arrayAndAffineFromNode(tzzNode)
+        fa, _ = self._arrayAndAffineFromNode(faNode)
+        rgbIjk = self.directionColor(Dxx, Dyy, Dzz, fa)                 # (i,j,k,3)
+        rgbKji = np.ascontiguousarray(rgbIjk.transpose(2, 1, 0, 3))     # (k,j,i,3)
+
+        old = slicer.mrmlScene.GetFirstNodeByName(name)
+        if old is not None:
+            slicer.mrmlScene.RemoveNode(old)
+        node = slicer.util.addVolumeFromArray(
+            rgbKji, name=name, nodeClassName="vtkMRMLVectorVolumeNode"
+        )
+        m = vtk.vtkMatrix4x4()
+        txxNode.GetIJKToRASMatrix(m)
+        node.SetIJKToRASMatrix(m)
+        return node
 
     def _mniToVox(self, xyz, affine):
         v = np.linalg.inv(affine) @ np.array([*xyz, 1.0])

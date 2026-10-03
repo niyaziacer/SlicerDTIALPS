@@ -56,7 +56,38 @@ reconstruction, and exporting the NIfTI files this module expects as input:
    - QC warnings (see below)
    - Automatic ROI markups placed in the scene at the exact voxel centers
      used for the computation
-3. Click **"CSV olarak kaydet"** to export all of the above to a CSV file.
+3. Click **Save as CSV** to export all of the above to a CSV file. The CSV also
+   records, for every input, the node name, **full file path, modification time
+   and size**, so you can always tell which export a result came from.
+
+### Checking the ROI placement: direction color map
+
+Click **Show direction color map (QC)** to add an approximate direction-encoded
+color map to the scene and show it as the background (after **Apply** the axial
+slice jumps to the ROI plane):
+
+- **R = Dxx** (left-right), **G = Dyy** (anterior-posterior),
+  **B = Dzz** (superior-inferior); brightness = FA.
+- Projection ROIs (**red** markups) should sit on **blue** fibers and
+  association ROIs (**cyan** markups) on **green** fibers, lateral to the
+  lateral-ventricle body.
+
+> This is **not** a true DEC map. A true DEC map needs the principal
+> eigenvector (the full tensor, `txy`/`txz`/`tyz` as well); the module only has
+> the diagonal components. For fibers that run along the image axes (the
+> projection and association fibers around the ALPS ROIs) the colors agree with
+> a true DEC map, which is enough for a visual placement check. It is a QC aid
+> only and is not used in the ALPS computation. The ROI check from the table
+> (dominant axis = Dzz for projection, Dyy for association) is the numeric
+> counterpart.
+
+### ROI definition
+
+Fixed MNI centers (mm): `proj_L` (-26, -16, 27), `proj_R` (26, -16, 27),
+`assoc_L` (-38, -16, 27), `assoc_R` (38, -16, 27). The sphere radius is
+`round(3 mm / voxel size)` voxels, but never less than 2 voxels: at 2 mm
+resolution this is **2 voxels = 4 mm** (about 33 voxels per ROI). Only voxels
+with FA ≥ 0.20 are averaged.
 
 ## Troubleshooting / tips
 
@@ -70,6 +101,12 @@ reconstruction, and exporting the NIfTI files this module expects as input:
   equals slice thickness (no inter-slice gap). A gap cannot be fixed later
   in DSI Studio or in this module — it makes the resulting ALPS value
   unreliable from the start.
+- **Use one export for all five maps**: re-exporting a subject several times
+  leaves several sets of identically named files (`..._txx.nii.gz`, ...). Mixing
+  maps from different exports silently changes the result (ALPS differed by
+  about 1 % between three exports of the same subject). The module now shows the
+  folder and modification time of every input and warns when the inputs come
+  from different folders or were written more than an hour apart.
 - **Keep the protocol consistent across a cohort**: all subjects should be
   acquired with the *same* b-value, direction count, and slice geometry.
   ALPS values computed from different protocols are not directly
@@ -130,3 +167,16 @@ If none of these trigger, the module reports "All checks passed."
   Radiol.* 2017.
 - Barisano G, et al. / Liu X, et al. — MNI coordinates for the ALPS
   projection and association fiber ROIs.
+
+## Development
+
+The numeric core (`DTIALPSLogic._computeALPSCore`, `directionColor`,
+`inputSpreadWarnings`) is plain NumPy and is tested without Slicer:
+
+```
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+The Slicer user interface (the **Show direction color map** button, volume
+loading) can only be exercised inside Slicer.
