@@ -84,10 +84,37 @@ slice jumps to the ROI plane):
 ### ROI definition
 
 Fixed MNI centers (mm): `proj_L` (-26, -16, 27), `proj_R` (26, -16, 27),
-`assoc_L` (-38, -16, 27), `assoc_R` (38, -16, 27). The sphere radius is
-`round(3 mm / voxel size)` voxels, but never less than 2 voxels: at 2 mm
-resolution this is **2 voxels = 4 mm** (about 33 voxels per ROI). Only voxels
-with FA ≥ 0.20 are averaged.
+`assoc_L` (-38, -16, 27), `assoc_R` (38, -16, 27). The four ROIs are spheres
+whose **radius is in real millimetres** (the distance is computed with the voxel
+size). The default is **3 mm** (6 mm diameter; 19 voxels at 2 mm resolution,
+before the FA mask); change it with the **ROI radius** box in the module (1-8 mm).
+Only voxels with FA ≥ 0.20 are averaged. The radius used is shown in the CSV
+(`ROI_Radius_mm`).
+
+> Earlier versions documented 3 mm but actually used 2 voxels = 4 mm
+> (33 voxels). Set the radius to 4 mm to reproduce those numbers.
+
+**Which radius?** The literature has no single standard: most studies use a
+5 mm *diameter* circle/sphere (2.5 mm radius), while a test-retest study
+(CHAMONIX, Jpn J Radiol) used a much larger ~9.4 mm sphere because larger ROIs
+gave higher reproducibility. Small ROIs are noisy; large ROIs mix in neighboring
+fibers and push the ALPS value down. The absolute ALPS value therefore depends
+on the ROI size - **use one radius for all subjects of a study** and do not
+compare absolute values across studies with different ROI sizes.
+
+At 2 mm resolution only a few radii differ (voxel centers are on a 2 mm grid):
+
+| radius | voxels / ROI | note |
+|---|---|---|
+| 1.0-2.5 mm | 7 | centre + 6 neighbours; below the 10-voxel QC limit, the module warns |
+| 3.0 mm (default) | 19 | |
+| 3.5 mm | 27 | |
+| 4.0 mm | 33 | former effective size |
+
+Sensitivity example (one subject, QSDR 2 mm, mean ALPS): 2.5 mm 1.39, 3 mm 1.35,
+3.5 mm 1.34, 4 mm 1.33. This is one subject - for a study, run your cohort with
+2-3 radii (e.g. 3 and 4 mm) and report that the conclusion does not depend on
+the choice.
 
 ## Troubleshooting / tips
 

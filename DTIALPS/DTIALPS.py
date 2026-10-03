@@ -96,6 +96,8 @@ class DTIALPS(ScriptedLoadableModule):
             "<b>Usage:</b> load each volume with its \"...\" button "
             "(txx/tyy/tzz/FA required, MD optional), then click Apply for "
             "left/right/mean ALPS, a per-ROI table, and automatic ROI markups. "
+            "The ROI radius (default 3 mm) is adjustable; use the same value for "
+            "all subjects. "
             "<b>Show direction color map (QC)</b> adds an approximate direction-"
             "encoded color map (R=Dxx, G=Dyy, B=Dzz, brightness=FA) so you can check "
             "that the projection ROIs sit on blue and the association ROIs on green "
@@ -179,6 +181,21 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
             rowLayout.addWidget(loadButton)
 
             formLayout.addRow(self.LABELS[key], rowWidget)
+
+        self.radiusSpinBox = qt.QDoubleSpinBox()
+        self.radiusSpinBox.setDecimals(1)
+        self.radiusSpinBox.setSingleStep(0.5)
+        self.radiusSpinBox.setRange(1.0, 8.0)
+        self.radiusSpinBox.setSuffix(" mm")
+        self.radiusSpinBox.setValue(DTIALPSLogic.ROI_RADIUS_MM)
+        self.radiusSpinBox.toolTip = (
+            "Radius of the four spherical ROIs in mm (default 3 mm = 6 mm diameter; "
+            "literature mostly uses ~5 mm diameter). Larger ROIs are less noisy but "
+            "mix in neighboring fibers and lower the ALPS value; smaller ROIs have "
+            "fewer voxels (the module warns below 10). Use the SAME radius for every "
+            "subject of a study. The radius is saved in the CSV."
+        )
+        formLayout.addRow("ROI radius", self.radiusSpinBox)
 
         self.applyButton = qt.QPushButton("Apply")
         self.applyButton.enabled = False
@@ -426,7 +443,8 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
     def onApplyClicked(self, checked=False):
         nodes = {key: self.nodeSelectors[key].currentNode() for key in self.ALL_KEYS}
         result = self.logic.computeALPSFromNodes(
-            nodes["txx"], nodes["tyy"], nodes["tzz"], nodes["fa"], nodes["md"]
+            nodes["txx"], nodes["tyy"], nodes["tzz"], nodes["fa"], nodes["md"],
+            radiusMm=float(self.radiusSpinBox.value),
         )
 
         self.alpsLLabel.text = f"ALPS Left: {result['alps_L']:.4f}"
@@ -541,6 +559,8 @@ class DTIALPSWidget(ScriptedLoadableModuleWidget):
             writer.writerow(["ALPS_Right", f"{result['alps_R']:.6f}"])
             writer.writerow(["ALPS_Mean", f"{result['alps_mean']:.6f}"])
             writer.writerow(["FA_Rescaled", str(result["fa_rescaled"])])
+            writer.writerow(["ROI_Radius_mm", f"{result['radius_mm']:.2f}"])
+            writer.writerow(["FA_Threshold", f"{self.logic.FA_THRESHOLD:.2f}"])
             writer.writerow([])
 
             writer.writerow(
@@ -671,10 +691,13 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
         v = np.linalg.inv(affine) @ np.array([*xyz, 1.0])
         return np.round(v[:3]).astype(int)
 
-    def _sphereMask(self, center, r, shape):
+    def _sphereMask(self, center, r, shape, voxSize=(1.0, 1.0, 1.0)):
+        """Kure maskesi. r, voxSize ile ayni birimde (voxSize verilmezse voksel; mm
+        verilirse voxSize mm/voksel olmali): mesafe voksel boyutuyla olceklenir."""
         zz, yy, xx = np.ogrid[: shape[2], : shape[1], : shape[0]]
         x0, y0, z0 = center
-        d2 = (xx - x0) ** 2 + (yy - y0) ** 2 + (zz - z0) ** 2
+        sx, sy, sz = (float(v) for v in voxSize)
+        d2 = (((xx - x0) * sx) ** 2 + ((yy - y0) * sy) ** 2 + ((zz - z0) * sz) ** 2)
         return (d2 <= r * r).transpose(2, 1, 0)
 
     def _roiMean(self, data, mask, fa, faThreshold):
@@ -685,23 +708,28 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
             return float("nan"), 0
         return float(data[m].mean()), int(m.sum())
 
-    def _computeALPSCore(self, Dxx, Dyy, Dzz, fa, affine, md=None):
-        """Sadece numpy dizileri + affine alan, MRML/dosya sisteminden bagimsiz cekirdek hesap."""
+    def _computeALPSCore(self, Dxx, Dyy, Dzz, fa, affine, md=None, radiusMm=None):
+        """Sadece numpy dizileri + affine alan, MRML/dosya sisteminden bagimsiz cekirdek hesap.
+
+        radiusMm: ROI yaricapi (gercek mm, voksel boyutuna gore). Verilmezse ROI_RADIUS_MM.
+        """
         shape = Dxx.shape
         voxSize = np.abs(np.diag(affine)[:3])
+        if radiusMm is None:
+            radiusMm = self.ROI_RADIUS_MM
+        radiusMm = float(radiusMm)
+        if not radiusMm > 0:
+            raise ValueError(f"ROI radius must be > 0 mm (got {radiusMm})")
 
         faRescaled = False
         if fa.max() > self.FA_RESCALE_TRIGGER:
             fa = fa / 1000.0
             faRescaled = True
 
-        rVox = max(2, round(self.ROI_RADIUS_MM / voxSize.mean()))
-        radiusMm = rVox * voxSize.mean()
-
         rois = {}
         for name, mniXYZ in self.MNI_ROIS.items():
             voxCenter = self._mniToVox(mniXYZ, affine)
-            mask = self._sphereMask(voxCenter, rVox, shape)
+            mask = self._sphereMask(voxCenter, radiusMm, shape, voxSize)
 
             dxxMean, n = self._roiMean(Dxx, mask, fa, self.FA_THRESHOLD)
             dyyMean, _ = self._roiMean(Dyy, mask, fa, self.FA_THRESHOLD)
@@ -761,11 +789,12 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
             "alps_mean": alpsMean,
             "fa_rescaled": faRescaled,
             "md_mean": mdMeanOverall,
+            "radius_mm": radiusMm,
             "affine": affine,
             "rois": rois,
         }
 
-    def computeALPS(self, txxPath, tyyPath, tzzPath, faPath, mdPath=None):
+    def computeALPS(self, txxPath, tyyPath, tzzPath, faPath, mdPath=None, radiusMm=None):
         """DTI-ALPS index'ini NIfTI dosya yollarindan hesaplar.
 
         Args:
@@ -773,11 +802,12 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
             faPath: FA NIfTI yolu.
             mdPath: opsiyonel MD NIfTI yolu (ALPS formulunu etkilemez, sadece
                 per-ROI bilgi amacli eklenir).
+            radiusMm: ROI yaricapi mm (varsayilan ROI_RADIUS_MM = 3.0).
 
         Returns:
             dict: {
                 "alps_L": float, "alps_R": float, "alps_mean": float,
-                "fa_rescaled": bool,
+                "fa_rescaled": bool, "radius_mm": float,
                 "md_mean": float | None,  # 4 ROI'nin MD ortalamasi (md verilmediyse None)
                 "affine": np.ndarray (4x4),
                 "rois": {
@@ -796,7 +826,7 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
         md = nib.load(mdPath).get_fdata() if mdPath else None
         affine = txxImg.affine
 
-        return self._computeALPSCore(Dxx, Dyy, Dzz, fa, affine, md)
+        return self._computeALPSCore(Dxx, Dyy, Dzz, fa, affine, md, radiusMm)
 
     def _arrayAndAffineFromNode(self, node):
         """Slicer vtkMRMLScalarVolumeNode -> (nibabel-uyumlu (i,j,k) dizi, affine).
@@ -818,7 +848,7 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
 
         return arrIjk, affine
 
-    def computeALPSFromNodes(self, txxNode, tyyNode, tzzNode, faNode, mdNode=None):
+    def computeALPSFromNodes(self, txxNode, tyyNode, tzzNode, faNode, mdNode=None, radiusMm=None):
         """DTI-ALPS index'ini Slicer sahnesindeki volume node'larindan hesaplar.
 
         computeALPS ile ayni cekirdegi (_computeALPSCore) kullanir; sadece
@@ -831,7 +861,7 @@ class DTIALPSLogic(ScriptedLoadableModuleLogic):
         fa, _ = self._arrayAndAffineFromNode(faNode)
         md, _ = self._arrayAndAffineFromNode(mdNode) if mdNode is not None else (None, None)
 
-        return self._computeALPSCore(Dxx, Dyy, Dzz, fa, affine, md)
+        return self._computeALPSCore(Dxx, Dyy, Dzz, fa, affine, md, radiusMm)
 
 
 class DTIALPSTest(ScriptedLoadableModuleTest):

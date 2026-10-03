@@ -38,8 +38,35 @@ def test_alps_formula_and_axes():
     assert r["alps_R"] == pytest.approx(expected)
     assert r["alps_mean"] == pytest.approx(expected)
     assert all(roi["axis_ok"] for roi in r["rois"].values())
-    assert r["rois"]["proj_L"]["radius_mm"] == 4.0  # 3 mm / 2 mm vokselde 2 voksel
-    assert r["rois"]["proj_L"]["n"] == 33
+    assert r["radius_mm"] == 3.0
+    assert r["rois"]["proj_L"]["radius_mm"] == 3.0  # gercek mm, varsayilan 3 mm
+    assert r["rois"]["proj_L"]["n"] == 19  # 2 mm vokselde: 1 + 6 + 12 voksel
+
+
+def test_radius_is_real_mm_and_adjustable():
+    Dxx, Dyy, Dzz, fa = make_maps()
+    n = {}
+    for rad in (2.0, 2.5, 3.0, 4.0):
+        r = logic._computeALPSCore(Dxx, Dyy, Dzz, fa, AFFINE, radiusMm=rad)
+        assert r["radius_mm"] == rad
+        assert r["rois"]["assoc_R"]["radius_mm"] == rad
+        n[rad] = r["rois"]["proj_L"]["n"]
+    # 2 mm vokselde: r=2 -> 7 (merkez + 6 komsu), r=2.5 -> 7, r=3 -> 19, r=4 -> 33
+    assert n == {2.0: 7, 2.5: 7, 3.0: 19, 4.0: 33}
+
+
+def test_radius_scales_with_voxel_size():
+    # 1 mm vokselde 3 mm yaricap ~113 voksel; yaricap vokselde degil mm'de
+    from_mask = logic._sphereMask((10, 10, 10), 3.0, (21, 21, 21), (1.0, 1.0, 1.0))
+    assert 100 < from_mask.sum() < 130
+    coarse = logic._sphereMask((10, 10, 10), 3.0, (21, 21, 21), (2.0, 2.0, 2.0))
+    assert coarse.sum() == 19
+
+
+def test_invalid_radius_rejected():
+    Dxx, Dyy, Dzz, fa = make_maps()
+    with pytest.raises(ValueError):
+        logic._computeALPSCore(Dxx, Dyy, Dzz, fa, AFFINE, radiusMm=0)
 
 
 def test_wrong_axis_is_flagged():
